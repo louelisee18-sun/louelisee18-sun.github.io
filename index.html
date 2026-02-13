@@ -1,40 +1,163 @@
 <!DOCTYPE html>
-<html>
+<html lang="fr">
 <head>
-<link rel="stylesheet" href="style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Abidjan Nav - Recherche Directe</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; background: #f4f4f4; }
+        #map { flex-grow: 1; width: 100%; }
+        
+        .info-nav { 
+            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            width: 85%; background: white; padding: 12px; border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); z-index: 1000; display: none;
+        }
+
+        .ui-panel { padding: 15px; background: #fff; border-radius: 20px 20px 0 0; z-index: 1001; box-shadow: 0 -5px 10px rgba(0,0,0,0.05); }
+        
+        /* Style de la barre de recherche */
+        .search-box { position: relative; margin-bottom: 10px; }
+        input#searchName { width: 94%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; font-size: 16px; }
+        .suggestions { 
+            position: absolute; bottom: 100%; left: 0; width: 100%; 
+            background: white; border: 1px solid #ddd; border-radius: 8px; 
+            max-height: 150px; overflow-y: auto; z-index: 2000; display: none;
+        }
+        .suggestion-item { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
+
+        .stats { display: flex; justify-content: space-around; font-weight: bold; font-size: 1.2em; color: #2c3e50; }
+        button.main-btn { background: #000; color: #ffcc00; border: none; padding: 15px; border-radius: 8px; font-weight: bold; width: 100%; }
+        .btn-center { position: absolute; bottom: 220px; right: 20px; background: white; border: none; width: 50px; height: 50px; border-radius: 50%; z-index: 1000; box-shadow: 0 2px 10px rgba(0,0,0,0.3); }
+    </style>
 </head>
-
 <body>
-<section id="À propos de moi">
-<h1>
-À propos de moi
-</h1>
-<ul>
-<li><strong>Mon nom :</strong> MOULOU KOUA CLAUDE ELYSEE</li>
-</ul>
-<ul>
-<li><strong>Mon parcours :</strong> par la grace de Dieu j'ai eu un parcours academique sans faute, admissible au BTS Option : Informatique et Développeur d’Applications depuis 2019, titulaire d'un BAC D obtenu au Collège Guichanrolain en 2017, du BEPC au Lycée Municipal Pierre Gadié 1 de Yopougon en 2013 et du CEPE au Groupe Scolaire Bébé Simone de Yopougon en 2010, je possède une base scientifique solide. Passionné par les nouvelles technologies et surtout le développement suivi de l'IA, je mobilise mes acquis académiques et recherches personnelles pour concevoir des solutions informatiques performantes adaptées au bésoins des entreprises et particuliers.</li>
-</ul>
 
-<ul>
-<li><strong>Centre d'interêt :</strong> la lecture, la meditation, les recherches sur la nutrition et les nouvelles découvertes technologique (l'IA, kmi K2, Antygravity, Google studio ia etc...), le Sport et la musique</li>
-</ul>
-</section>
-
-<section id="Ma passion">
-<h1>Ma passion</h1>
-<p>Aussi loin que je me souvienne, j'ai toujours été animé d'une curiosité très avancé concerné les nouvelles technologie numérique que jusqu'à aujourd'hui je n'arrive à expliquer mais tout ce que je peux dire c'est que je gagne d'une plaisir a maitriser les nouvelles technologies pour aider les personnes qui ont besoin d'aide</p>
-</section>
-
-  <div class="container">
-
-        <button onclick="saluer()">Dire Bonjour</button>
-
-        <hr>
-
-        <button onclick="changerMode()" style="background-color: #333;">🌙 Mode Sombre / Clair</button>
+    <div class="info-nav" id="navPanel">
+        <div id="destName" style="font-weight: bold; color: #27ae60; text-align:center;"></div>
+        <div class="stats">
+            <span id="kmRemaining">0 km</span>
+            <span id="minRemaining">0 min</span>
+        </div>
     </div>
 
-<script src="script.js"></script>
+    <div id="map"></div>
+    <button class="btn-center" onclick="centrerCarte()">🎯</button>
+
+    <div class="ui-panel">
+        <div class="search-box">
+            <div class="suggestions" id="suggestionList"></div>
+            <input type="text" id="searchName" placeholder="Rechercher un nom (ex: Pharmacie du Plateau...)" oninput="filtrerNoms()">
+        </div>
+
+        <select id="categorie" style="width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px;">
+            <option value="">-- Ou choisir une catégorie --</option>
+            <option value="orange_money">Orange Money</option>
+            <option value="pharmacie">Pharmacie</option>
+            <option value="restaurant">Restaurant</option>
+        </select>
+        <button class="main-btn" onclick="lancerRecherche()">LANCER L'ITINÉRAIRE</button>
+    </div>
+
+    <script>
+        const map = L.map('map', { zoomControl: false }).setView([5.3484, -4.0305], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        let userPos = null, watchID = null, routingControl = null;
+        let tousLesLieux = [], lieuSelectionne = null;
+
+        let userMarker = L.circleMarker([0,0], { radius: 8, color: '#fff', fillColor: '#007bff', fillOpacity: 1, weight: 3 }).addTo(map);
+        let destMarker = L.marker([0,0]).addTo(map);
+
+        async function chargerDonnees() {
+            const reponse = await fetch('./lieux.json');
+            tousLesLieux = await reponse.json();
+        }
+        chargerDonnees();
+
+        // 1. Fonction de suggestions en temps réel
+        function filtrerNoms() {
+            const input = document.getElementById('searchName').value.toLowerCase();
+            const list = document.getElementById('suggestionList');
+            list.innerHTML = '';
+            
+            if (input.length < 2) { list.display = 'none'; return; }
+
+            const matches = tousLesLieux.filter(l => l.nom.toLowerCase().includes(input));
+            
+            if (matches.length > 0) {
+                list.style.display = 'block';
+                matches.forEach(m => {
+                    const div = document.createElement('div');
+                    div.className = 'suggestion-item';
+                    div.innerText = m.nom;
+                    div.onclick = () => {
+                        document.getElementById('searchName').value = m.nom;
+                        lieuSelectionne = m;
+                        list.style.display = 'none';
+                    };
+                    list.appendChild(div);
+                });
+            }
+        }
+
+        function centrerCarte() { if (userPos) map.setView(userPos, 16); }
+
+        function lancerRecherche() {
+            const cat = document.getElementById('categorie').value;
+            const nomInput = document.getElementById('searchName').value;
+
+            if (routingControl) map.removeControl(routingControl);
+            
+            if (navigator.geolocation) {
+                if (watchID) navigator.geolocation.clearWatch(watchID);
+
+                watchID = navigator.geolocation.watchPosition(pos => {
+                    userPos = [pos.coords.latitude, pos.coords.longitude];
+                    userMarker.setLatLng(userPos);
+
+                    let cible = null;
+
+                    // Priorité : Nom sélectionné > Catégorie la plus proche
+                    if (lieuSelectionne && nomInput === lieuSelectionne.nom) {
+                        cible = lieuSelectionne;
+                    } else if (cat !== "") {
+                        const listeFiltree = tousLesLieux.filter(l => l.cat === cat);
+                        let minD = Infinity;
+                        listeFiltree.forEach(l => {
+                            const d = Math.hypot(l.lat - userPos[0], l.lng - userPos[1]);
+                            if (d < minD) { minD = d; cible = l; }
+                        });
+                    }
+
+                    if (cible) {
+                        tracerRoute(userPos, cible);
+                    }
+                }, null, { enableHighAccuracy: true });
+            }
+        }
+
+        function tracerRoute(depart, arrivee) {
+            destMarker.setLatLng([arrivee.lat, arrivee.lng]);
+            document.getElementById('destName').innerText = arrivee.nom;
+            document.getElementById('navPanel').style.display = "block";
+
+            if (routingControl) map.removeControl(routingControl);
+            routingControl = L.Routing.control({
+                waypoints: [L.latLng(depart[0], depart[1]), L.latLng(arrivee.lat, arrivee.lng)],
+                createMarker: () => null,
+                lineOptions: { styles: [{ color: '#000', weight: 6 }] }
+            }).on('routesfound', e => {
+                const r = e.routes[0];
+                document.getElementById('kmRemaining').innerText = (r.summary.totalDistance / 1000).toFixed(1) + " km";
+                document.getElementById('minRemaining').innerText = Math.round(r.summary.totalTime / 60) + " min";
+            }).addTo(map);
+        }
+    </script>
 </body>
 </html>
